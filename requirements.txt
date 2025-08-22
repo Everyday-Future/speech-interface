@@ -1,0 +1,5 @@
+openai-whisper>=20231117
+pyaudio>=0.2.11
+pyperclip>=1.8.2
+torch>=2.0.0
+torchaudio>=2.0.0

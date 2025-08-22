@@ -1,0 +1,206 @@
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+dist/
+settings.cfg
+app.db
+*.log*
+*__pycache__
+*.~lock*
+*.env
+*.env.secrets
+*.env.local
+*.zip
+*.pickle
+*.Trash-1000*
+toolkit/*.ttf
+*/.ipynb_checkpoints/*
+chromedriver.exe
+geckodriver.exe
+geckodriver.log
+msedgedriver.exe
+
+# exclude everything in temp except the folder itself.
+data/*.json
+data/raw/
+data/temp/
+data/renders/
+data/creds/
+data/grading/
+data/pipeline/
+data/images/upload/
+data/images/completed/
+data/placeholders/
+data/fuzzer_data/*.json
+data/test_gallery/*.*
+data/test_gallery/*/*.*
+data/test_gallery/**/*.*
+data/images
+data/fsq-os-places
+!data/test_gallery/.gitkeep
+!data/test_assets
+data/*.pdf
+results/*/*.*
+
+
+# frontend
+/frontend/coverage
+frontend/node_modules
+frontend/build
+frontend/.svelte-kit
+frontend/package
+frontend/android
+frontend/ios
+frontend/.env
+frontend/.next/*.*
+frontend/.next/*/*.*
+frontend/.next/**/*.*
+frontend/docker.env
+
+
+# native
+native/coverage
+native/node_modules
+native/build
+native/.expo
+native/package
+native/android
+native/ios
+native/.env
+native/docker.env
+
+
+docs/build
+.DS_Store
+*$py.class
+
+*.log
+*.db
+/*.ttf
+
+# flake8
+.flake8
+
+
+# C extensions
+*.so
+# OSX useful to ignore
+*.DS_Store
+.AppleDouble
+.LSOverride
+
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Packages
+*.egg
+*.egg-info
+dist
+build
+eggs
+parts
+bin
+var
+sdist
+develop-eggs
+.installed.cfg
+__pycache__
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+
+# Unit test / coverage reports
+.coverage
+.tox
+nosetests.xml
+
+# Translations
+*.mo
+
+# Mr Developer
+.mr.developer.cfg
+.project
+.pydevproject
+
+# Installer logs
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage.*
+.cache
+coverage.xml
+*,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.pot
+
+#Host
+host/terraform/.idea/
+host/terraform//.terraform.tfstate.lock.info
+host/terraform/plan.*
+host/terraform/.terraform
+
+# Sphinx documentation
+docs/_build/
+
+# IntelliJ Idea family of suites
+.idea
+.idea/workspace.xml
+.idea/*
+*.iml
+## File-based project format:
+*.ipr
+*.iws
+## mpeltonen/sbt-idea plugin
+.idea_modules/
+
+# PyBuilder
+target/
+
+
+# misc
+*.pem
+
+# Vue3 Logs
+frontend/logs
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+frontend/lerna-debug.log*
+frontend/dist-ssr
+frontend/*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
