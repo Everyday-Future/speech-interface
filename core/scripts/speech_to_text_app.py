@@ -3,6 +3,8 @@ import tkinter as tk
 import threading
 import os
 import tempfile
+from contextlib import contextmanager
+
 import pyperclip
 import time
 import logging
@@ -45,6 +47,9 @@ class SpeechToTextApp:
         self.setup_window()
         self.create_widgets()
 
+        # Bind spacebar to parse button
+        self.root.bind('<space>', lambda event: self.on_parse_click())
+
         # Start UI update loop
         self.root.after(100, self.process_ui_queue)
 
@@ -56,6 +61,32 @@ class SpeechToTextApp:
         self.root.title(self.config.window_title)
         self.root.geometry(self.config.window_geometry)
         self.root.configure(padx=20, pady=20)
+
+    @contextmanager
+    def suppress_subprocess_window(self):
+        """Context manager to suppress subprocess console windows on Windows"""
+        if os.name == 'nt':  # Windows only
+            import subprocess
+            original_popen = subprocess.Popen
+
+            def patched_popen(*args, **kwargs):
+                # Add window suppression flags
+                if 'startupinfo' not in kwargs:
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+                    kwargs['startupinfo'] = startupinfo
+                if 'creationflags' not in kwargs:
+                    kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+                return original_popen(*args, **kwargs)
+
+            subprocess.Popen = patched_popen
+            try:
+                yield
+            finally:
+                subprocess.Popen = original_popen
+        else:
+            yield
 
     def create_widgets(self):
         """Create all GUI widgets"""
@@ -347,7 +378,8 @@ class SpeechToTextApp:
         """Attempt transcription with automatic retry"""
         for attempt in range(max_retries):
             try:
-                return transcribe_func(audio_file)
+                with self.suppress_subprocess_window():
+                    return transcribe_func(audio_file)
             except Exception as e:
                 if attempt == max_retries - 1:
                     self.logger.error(f"Transcription failed after {max_retries} attempts")
