@@ -35,6 +35,7 @@ class AudioRecorder:
         self.audio = None
         self.stream = None
         self.frames = []
+        self.frames_lock = threading.Lock()
         self.recording = SafeFlag()
         self._lock = threading.Lock()
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -111,7 +112,8 @@ class AudioRecorder:
                             self.config.chunk_size,
                             exception_on_overflow=False
                         )
-                        self.frames.append(data)
+                        with self.frames_lock:
+                            self.frames.append(data)
                     except Exception as e:
                         self.logger.error(f"Error reading audio data: {e}")
                         self.recording.set(False)
@@ -159,3 +161,19 @@ class AudioRecorder:
                     logger.error(f"  Error retrieving device {i}: {e}")
         finally:
             p.terminate()
+
+    def get_frame_count(self) -> int:
+        """Get current number of frames recorded"""
+        with self.frames_lock:
+            return len(self.frames)
+
+    def get_frames_from(self, start_index: int) -> list:
+        """Get frames from start_index to current (thread-safe copy)"""
+        with self.frames_lock:
+            if start_index < 0 or start_index >= len(self.frames):
+                return []
+            return self.frames[start_index:].copy()
+
+    def is_recording(self) -> bool:
+        """Check if currently recording"""
+        return self.recording.get()

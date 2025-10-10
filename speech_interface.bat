@@ -15,12 +15,12 @@ if %ERRORLEVEL% neq 0 (
 
 :: Set paths
 set SCRIPT_DIR=%~dp0
-set SCRIPT_PATH=%SCRIPT_DIR%speech_to_text.pyw
+set SCRIPT_PATH=%SCRIPT_DIR%main.pyw
 set VENV_DIR=%SCRIPT_DIR%venv
 
 :: Check if the Python script exists
 if not exist "%SCRIPT_PATH%" (
-    echo Error: Could not find speech_to_text_app.py in the same directory.
+    echo Error: Could not find main.py in the same directory.
     echo Please ensure the Python script is in the same folder as this batch file.
     echo.
     pause

@@ -32,6 +32,12 @@ class SpeechToTextApp:
         self.last_button_press = 0
         self.temp_file: Optional[str] = None
 
+        # Latching mode state
+        self.latching_recording = SafeFlag()
+        self.last_transcribed_frame_index = 0
+        self.accumulated_fast_text = ""
+        self.accumulated_accurate_text = ""
+
         # UI update queue
         self.ui_queue = Queue()
 
@@ -53,22 +59,54 @@ class SpeechToTextApp:
 
     def create_widgets(self):
         """Create all GUI widgets"""
-        # Button frame
-        button_frame = tk.Frame(self.root)
-        button_frame.pack(fill=tk.X, pady=(0, 10))
+        # Button container frame
+        button_container = tk.Frame(self.root)
+        button_container.pack(fill=tk.X, pady=(0, 10))
 
-        # Record button
-        self.record_button = tk.Button(
-            button_frame,
+        # Create two buttons side by side (50/50 split)
+        button_left_frame = tk.Frame(button_container)
+        button_left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 2))
+
+        button_right_frame = tk.Frame(button_container)
+        button_right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(2, 0))
+
+        # Press-and-hold button (left)
+        self.press_hold_button = tk.Button(
+            button_left_frame,
             text="Press and Hold to Record",
             bg="lightcoral",
             activebackground="red",
             font=("Arial", 12),
             height=2
         )
-        self.record_button.pack(fill=tk.X, pady=(0, 10))
-        self.record_button.bind("<ButtonPress-1>", self.on_record_start)
-        self.record_button.bind("<ButtonRelease-1>", self.on_record_stop)
+        self.press_hold_button.pack(fill=tk.BOTH, expand=True)
+        self.press_hold_button.bind("<ButtonPress-1>", self.on_record_start)
+        self.press_hold_button.bind("<ButtonRelease-1>", self.on_record_stop)
+
+        # Toggle/latching button (right)
+        self.toggle_button = tk.Button(
+            button_right_frame,
+            text="Start Latching Record",
+            bg="lightcoral",
+            activebackground="red",
+            font=("Arial", 12),
+            height=2,
+            command=self.on_toggle_click
+        )
+        self.toggle_button.pack(fill=tk.BOTH, expand=True)
+
+        # Parse button (below toggle button)
+        self.parse_button = tk.Button(
+            self.root,
+            text="Parse Recording",
+            bg="lightblue",
+            activebackground="skyblue",
+            font=("Arial", 11),
+            height=1,
+            state=tk.DISABLED,
+            command=self.on_parse_click
+        )
+        self.parse_button.pack(fill=tk.X, pady=(0, 10))
 
         # Status label
         self.status_label = tk.Label(
@@ -88,14 +126,14 @@ class SpeechToTextApp:
             "Quick Transcription (Faster):",
             self.copy_fast_to_clipboard
         )
-        self.paned_window.add(self.fast_frame, height=250)
+        self.paned_window.add(self.fast_frame, height=300)
 
         # Accurate transcription section
         self.accurate_frame = self._create_transcription_section(
             "Enhanced Transcription (More Accurate):",
             self.copy_accurate_to_clipboard
         )
-        self.paned_window.add(self.accurate_frame, height=250)
+        self.paned_window.add(self.accurate_frame, height=450)
 
     def _create_transcription_section(self, title: str, copy_callback: Callable):
         """Create a transcription section with header, progress, and text area"""
@@ -198,7 +236,7 @@ class SpeechToTextApp:
 
         # Start recording
         if self.recorder.start_recording():
-            self.record_button.config(text="Recording... Release to Stop", bg="red")
+            self.press_hold_button.config(text="Recording... Release to Stop", bg="red")
             self.status_label.config(text="Recording audio...")
             self.reset_ui()
 
@@ -215,12 +253,12 @@ class SpeechToTextApp:
 
         if not frames:
             self.status_label.config(text="No audio recorded")
-            self.record_button.config(text="Press and Hold to Record", bg="lightcoral")
+            self.press_hold_button.config(text="Press and Hold to Record", bg="lightcoral")
             return
 
         # Update UI
         self.processing.set(True)
-        self.record_button.config(text="Press and Hold to Record", bg="lightcoral")
+        self.press_hold_button.config(text="Press and Hold to Record", bg="lightcoral")
         self.status_label.config(text="Processing audio...")
         self.fast_progress.start()
 
@@ -228,6 +266,229 @@ class SpeechToTextApp:
         thread = threading.Thread(target=self.process_audio, args=(frames,))
         thread.daemon = True
         thread.start()
+
+    def on_toggle_click(self):
+        """Handle toggle button click for latching recording"""
+        if self.processing.get():
+            self.logger.warning("Cannot toggle recording while processing")
+            return
+
+        if not self.latching_recording.get():
+            # Start latching recording
+            self.cancel_second_pass.set(True)
+            time.sleep(0.1)
+
+            if self.recorder.start_recording():
+                self.latching_recording.set(True)
+                self.last_transcribed_frame_index = 0
+                self.accumulated_fast_text = ""
+                self.accumulated_accurate_text = ""
+
+                self.toggle_button.config(text="Stop Recording", bg="red")
+                self.press_hold_button.config(state=tk.DISABLED)
+                self.parse_button.config(state=tk.NORMAL)
+                self.status_label.config(text="Latching recording active...")
+                self.reset_ui()
+        else:
+            # Stop latching recording and process final segment
+            self.latching_recording.set(False)
+            self.parse_button.config(state=tk.DISABLED)
+            self.toggle_button.config(text="Start Latching Record", bg="lightcoral")
+            self.press_hold_button.config(state=tk.NORMAL)
+
+            # Stop recording
+            frames = self.recorder.stop_recording()
+
+            if frames:
+                # Process final unparsed segment
+                self.processing.set(True)
+                self.status_label.config(text="Processing final segment...")
+                thread = threading.Thread(target=self.process_final_segment, args=(frames,))
+                thread.daemon = True
+                thread.start()
+            else:
+                self.status_label.config(text="Ready")
+
+    def on_parse_click(self):
+        """Handle parse button click during latching recording"""
+        if not self.latching_recording.get():
+            return
+
+        current_frame_count = self.recorder.get_frame_count()
+
+        if current_frame_count <= self.last_transcribed_frame_index:
+            self.status_label.config(text="No new audio to parse")
+            return
+
+        # Get new frames since last parse
+        frames_segment = self.recorder.get_frames_from(self.last_transcribed_frame_index)
+
+        if not frames_segment:
+            self.status_label.config(text="No new audio to parse")
+            return
+
+        # Update index for next parse
+        segment_start_index = self.last_transcribed_frame_index
+        self.last_transcribed_frame_index = current_frame_count
+
+        # Process in background
+        self.status_label.config(text="Parsing recorded audio...")
+        self.fast_progress.start()
+        self.accurate_progress.start()
+
+        thread = threading.Thread(
+            target=self.process_incremental_transcription,
+            args=(frames_segment, segment_start_index)
+        )
+        thread.daemon = True
+        thread.start()
+
+    def transcribe_with_retry(self, transcribe_func, audio_file, max_retries=3):
+        """Attempt transcription with automatic retry"""
+        for attempt in range(max_retries):
+            try:
+                return transcribe_func(audio_file)
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    self.logger.error(f"Transcription failed after {max_retries} attempts")
+                    raise
+                self.logger.warning(f"Transcription attempt {attempt + 1} failed: {e}, retrying...")
+                time.sleep(0.5)
+
+    def process_incremental_transcription(self, frames_segment: list, segment_start_index: int):
+        """Process incremental transcription of a segment"""
+        temp_file = None
+        try:
+            # Create temp file for this segment
+            fd, temp_file = tempfile.mkstemp(suffix='.wav', dir=self.config.temp_dir)
+            os.close(fd)
+
+            # Save segment to file
+            if not self.recorder.save_to_file(frames_segment, temp_file):
+                raise Exception("Failed to save audio segment")
+
+            # Fast transcription with retry
+            self.queue_ui_update(self.fast_status_label.config, text="Transcribing...")
+            fast_text = self.transcribe_with_retry(
+                self.transcriber.transcribe_fast,
+                temp_file
+            )
+
+            # Append to accumulated text
+            if self.accumulated_fast_text:
+                self.accumulated_fast_text += "\n\n"
+            self.accumulated_fast_text += fast_text
+
+            self.queue_ui_update(self.fast_progress.stop)
+            self.queue_ui_update(self.fast_status_label.config, text="Complete!")
+            self.queue_ui_update(self.fast_output_text.delete, 1.0, tk.END)
+            self.queue_ui_update(self.fast_output_text.insert, tk.END, self.accumulated_fast_text)
+
+            # Accurate transcription with retry
+            self.queue_ui_update(self.accurate_status_label.config, text="Processing...")
+            accurate_text = self.transcribe_with_retry(
+                self.transcriber.transcribe_accurate,
+                temp_file
+            )
+
+            # Append to accumulated text
+            if self.accumulated_accurate_text:
+                self.accumulated_accurate_text += "\n\n"
+            self.accumulated_accurate_text += accurate_text
+
+            self.queue_ui_update(self.accurate_progress.stop)
+            self.queue_ui_update(self.accurate_status_label.config, text="Complete!")
+            self.queue_ui_update(self.accurate_output_text.delete, 1.0, tk.END)
+            self.queue_ui_update(self.accurate_output_text.insert, tk.END, self.accumulated_accurate_text)
+
+            self.queue_ui_update(self.status_label.config, text="Latching recording active... (parsed)")
+
+        except Exception as e:
+            self.logger.error(f"Error in incremental transcription: {e}")
+            self.queue_ui_update(self.status_label.config, text=f"Parse error: {str(e)}")
+            self.queue_ui_update(self.fast_progress.stop)
+            self.queue_ui_update(self.accurate_progress.stop)
+            raise
+        finally:
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except Exception as e:
+                    self.logger.error(f"Error removing temp file: {e}")
+
+    def process_final_segment(self, frames: list):
+        """Process final unparsed segment when stopping latching recording"""
+        temp_file = None
+        try:
+            # Get only unparsed frames
+            unparsed_frames = frames[self.last_transcribed_frame_index:]
+
+            if not unparsed_frames:
+                # No new frames, just update status
+                self.queue_ui_update(self.status_label.config, text="Ready")
+                self.processing.set(False)
+                return
+
+            # Create temp file
+            fd, temp_file = tempfile.mkstemp(suffix='.wav', dir=self.config.temp_dir)
+            os.close(fd)
+
+            # Save unparsed segment
+            if not self.recorder.save_to_file(unparsed_frames, temp_file):
+                raise Exception("Failed to save final audio segment")
+
+            self.queue_ui_update(self.fast_progress.start)
+            self.queue_ui_update(self.accurate_progress.start)
+
+            # Fast transcription with retry
+            self.queue_ui_update(self.fast_status_label.config, text="Transcribing final segment...")
+            fast_text = self.transcribe_with_retry(
+                self.transcriber.transcribe_fast,
+                temp_file
+            )
+
+            # Append to accumulated text
+            if self.accumulated_fast_text:
+                self.accumulated_fast_text += "\n\n"
+            self.accumulated_fast_text += fast_text
+
+            self.queue_ui_update(self.fast_progress.stop)
+            self.queue_ui_update(self.fast_status_label.config, text="Complete!")
+            self.queue_ui_update(self.fast_output_text.delete, 1.0, tk.END)
+            self.queue_ui_update(self.fast_output_text.insert, tk.END, self.accumulated_fast_text)
+
+            # Accurate transcription with retry
+            self.queue_ui_update(self.accurate_status_label.config, text="Processing final segment...")
+            accurate_text = self.transcribe_with_retry(
+                self.transcriber.transcribe_accurate,
+                temp_file
+            )
+
+            # Append to accumulated text
+            if self.accumulated_accurate_text:
+                self.accumulated_accurate_text += "\n\n"
+            self.accumulated_accurate_text += accurate_text
+
+            self.queue_ui_update(self.accurate_progress.stop)
+            self.queue_ui_update(self.accurate_status_label.config, text="Complete!")
+            self.queue_ui_update(self.accurate_output_text.delete, 1.0, tk.END)
+            self.queue_ui_update(self.accurate_output_text.insert, tk.END, self.accumulated_accurate_text)
+
+            self.queue_ui_update(self.status_label.config, text="Ready")
+
+        except Exception as e:
+            self.logger.error(f"Error processing final segment: {e}")
+            self.queue_ui_update(self.status_label.config, text=f"Error: {str(e)}")
+            self.queue_ui_update(self.fast_progress.stop)
+            self.queue_ui_update(self.accurate_progress.stop)
+            raise
+        finally:
+            self.processing.set(False)
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except Exception as e:
+                    self.logger.error(f"Error removing temp file: {e}")
 
     def process_audio(self, frames: list):
         """Process recorded audio with two-pass transcription"""
@@ -318,6 +579,7 @@ class SpeechToTextApp:
         """Clean up on window close"""
         self.logger.info("Shutting down...")
         self.cancel_second_pass.set(True)
+        self.latching_recording.set(False)
         self.recorder.cleanup()
         self.cleanup_temp_file()
         self.root.destroy()

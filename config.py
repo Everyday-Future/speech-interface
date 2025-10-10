@@ -21,10 +21,10 @@ class Config:
     sample_rate: int = 44100
     # Model settings
     fast_model_name: str = 'tiny.en'
-    accurate_model_name: str = 'small.en'
+    accurate_model_name: str = 'turbo'
     # UI settings
     window_title: str = "Speech-to-Text App"
-    window_geometry: str = "600x600"
+    window_geometry: str = "600x900"
     debounce_time: int = 500  # milliseconds
     # Logging
     log_file: str = 'speech_to_text.log'
