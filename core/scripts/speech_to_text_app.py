@@ -4,7 +4,7 @@ import threading
 import os
 import tempfile
 from contextlib import contextmanager
-
+from datetime import datetime
 import pyperclip
 import time
 import logging
@@ -164,7 +164,18 @@ class SpeechToTextApp:
             "Enhanced Transcription (More Accurate):",
             self.copy_accurate_to_clipboard
         )
-        self.paned_window.add(self.accurate_frame, height=450)
+        self.paned_window.add(self.accurate_frame, height=300)
+        # Copy datetime button
+        self.datetime_button = tk.Button(
+            self.root,
+            text="Copy Datetime",
+            bg="lightgreen",
+            activebackground="green",
+            font=("Arial", 10),
+            height=1,
+            command=self.copy_datetime_to_clipboard
+        )
+        self.datetime_button.pack(fill=tk.X, pady=(10, 0))
 
     def _create_transcription_section(self, title: str, copy_callback: Callable):
         """Create a transcription section with header, progress, and text area"""
@@ -593,6 +604,16 @@ class SpeechToTextApp:
     def copy_accurate_to_clipboard(self):
         """Copy accurate transcription to clipboard"""
         self._copy_to_clipboard(self.accurate_output_text, self.accurate_status_label, "Enhanced")
+
+    def copy_datetime_to_clipboard(self):
+        """Copy current datetime in ISO format to clipboard"""
+        try:
+            iso_datetime = datetime.now().strftime("%Y %B %d, %A at %I:%M %p")
+            pyperclip.copy(iso_datetime)
+            self.status_label.config(text=f"Datetime copied: {iso_datetime}")
+        except Exception as e:
+            self.logger.error(f"Error copying datetime: {e}")
+            self.status_label.config(text=f"Error copying datetime: {str(e)}")
 
     def _copy_to_clipboard(self, text_widget, status_label, prefix):
         """Helper to copy text to clipboard"""

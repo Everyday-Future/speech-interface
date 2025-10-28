@@ -21,7 +21,7 @@ class Config:
     sample_rate: int = 44100
     # Model settings
     fast_model_name: str = 'tiny.en'
-    accurate_model_name: str = 'turbo'
+    accurate_model_name: str = 'medium.en'
     # UI settings
     window_title: str = "Speech-to-Text App"
     window_geometry: str = "600x900"
