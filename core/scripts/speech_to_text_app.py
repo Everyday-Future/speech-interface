@@ -245,6 +245,29 @@ class SpeechToTextApp:
 
         return frame
 
+    def _get_transcription_stats(self, text: str) -> tuple[int, int]:
+        """Calculate word count and paragraph count from accumulated text
+
+        Returns:
+            tuple: (word_count, paragraph_count)
+        """
+        if not text:
+            return (0, 0)
+
+        # Count words by splitting on whitespace
+        word_count = len(text.split())
+
+        # Count paragraphs as number of \n\n separators + 1
+        paragraph_count = text.count("\n\n") + 1
+
+        return (word_count, paragraph_count)
+
+    def _update_latching_status(self):
+        """Update status label with current word and paragraph counts"""
+        word_count, para_count = self._get_transcription_stats(self.accumulated_fast_text)
+        status_text = f"Word count: {word_count}   Paragraph count: {para_count}"
+        self.queue_ui_update(self.status_label.config, text=status_text)
+
     def process_ui_queue(self):
         """Process UI updates from queue"""
         try:
@@ -329,7 +352,7 @@ class SpeechToTextApp:
                 self.toggle_button.config(text="Stop Recording", bg="red")
                 self.press_hold_button.config(state=tk.DISABLED)
                 self.parse_button.config(state=tk.NORMAL)
-                self.status_label.config(text="Latching recording active...")
+                self._update_latching_status()
                 self.reset_ui()
         else:
             # Stop latching recording and process final segment
@@ -417,7 +440,8 @@ class SpeechToTextApp:
                 temp_file
             )
 
-            # Append to accumulated text
+            # Strip whitespace and append to accumulated text
+            fast_text = fast_text.strip()
             if self.accumulated_fast_text:
                 self.accumulated_fast_text += "\n\n"
             self.accumulated_fast_text += fast_text
@@ -427,6 +451,9 @@ class SpeechToTextApp:
             self.queue_ui_update(self.fast_output_text.delete, 1.0, tk.END)
             self.queue_ui_update(self.fast_output_text.insert, tk.END, self.accumulated_fast_text)
 
+            # Update status with word/paragraph counts
+            self._update_latching_status()
+
             # Accurate transcription with retry
             self.queue_ui_update(self.accurate_status_label.config, text="Processing...")
             accurate_text = self.transcribe_with_retry(
@@ -434,7 +461,8 @@ class SpeechToTextApp:
                 temp_file
             )
 
-            # Append to accumulated text
+            # Strip whitespace and append to accumulated text
+            accurate_text = accurate_text.strip()
             if self.accumulated_accurate_text:
                 self.accumulated_accurate_text += "\n\n"
             self.accumulated_accurate_text += accurate_text
@@ -443,8 +471,6 @@ class SpeechToTextApp:
             self.queue_ui_update(self.accurate_status_label.config, text="Complete!")
             self.queue_ui_update(self.accurate_output_text.delete, 1.0, tk.END)
             self.queue_ui_update(self.accurate_output_text.insert, tk.END, self.accumulated_accurate_text)
-
-            self.queue_ui_update(self.status_label.config, text="Latching recording active... (parsed)")
 
         except Exception as e:
             self.logger.error(f"Error in incremental transcription: {e}")
@@ -467,8 +493,13 @@ class SpeechToTextApp:
             unparsed_frames = frames[self.last_transcribed_frame_index:]
 
             if not unparsed_frames:
-                # No new frames, just update status
-                self.queue_ui_update(self.status_label.config, text="Ready")
+                # No new frames, show final status with counts if available
+                if self.accumulated_fast_text:
+                    word_count, para_count = self._get_transcription_stats(self.accumulated_fast_text)
+                    final_status = f"Ready  (Word count: {word_count}   Paragraph count: {para_count - 1})"
+                else:
+                    final_status = "Ready"
+                self.queue_ui_update(self.status_label.config, text=final_status)
                 self.processing.set(False)
                 return
 
@@ -490,7 +521,8 @@ class SpeechToTextApp:
                 temp_file
             )
 
-            # Append to accumulated text
+            # Strip whitespace and append to accumulated text
+            fast_text = fast_text.strip()
             if self.accumulated_fast_text:
                 self.accumulated_fast_text += "\n\n"
             self.accumulated_fast_text += fast_text
@@ -507,7 +539,8 @@ class SpeechToTextApp:
                 temp_file
             )
 
-            # Append to accumulated text
+            # Strip whitespace and append to accumulated text
+            accurate_text = accurate_text.strip()
             if self.accumulated_accurate_text:
                 self.accumulated_accurate_text += "\n\n"
             self.accumulated_accurate_text += accurate_text
@@ -517,7 +550,13 @@ class SpeechToTextApp:
             self.queue_ui_update(self.accurate_output_text.delete, 1.0, tk.END)
             self.queue_ui_update(self.accurate_output_text.insert, tk.END, self.accumulated_accurate_text)
 
-            self.queue_ui_update(self.status_label.config, text="Ready")
+            # Show counts in final status if we have accumulated text
+            if self.accumulated_fast_text:
+                word_count, para_count = self._get_transcription_stats(self.accumulated_fast_text)
+                final_status = f"Ready  (Word count: {word_count}   Paragraph count: {para_count - 1})"
+            else:
+                final_status = "Ready"
+            self.queue_ui_update(self.status_label.config, text=final_status)
 
         except Exception as e:
             self.logger.error(f"Error processing final segment: {e}")
