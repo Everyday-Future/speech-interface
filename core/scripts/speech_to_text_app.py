@@ -14,6 +14,7 @@ from queue import Queue
 from config import Config
 from core.adapters.audio_recorder import AudioRecorder, SafeFlag
 from core.adapters.audio_transcriber import AudioTranscriber
+from core.scripts.theme import Theme
 
 
 class SpeechToTextApp:
@@ -23,6 +24,19 @@ class SpeechToTextApp:
         self.root = root
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(logging.DEBUG)
+        # create console handler and set level to debug
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.DEBUG)
+        # create formatter
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        # add formatter to ch
+        ch.setFormatter(formatter)
+        # add ch to logger
+        self.logger.addHandler(ch)
+        # Initialize theme
+        self.theme = Theme(config.default_theme)
+        self.theme.register_callback(self.apply_theme)
 
         # Initialize components
         self.recorder = AudioRecorder(config)
@@ -45,7 +59,11 @@ class SpeechToTextApp:
 
         # Setup window
         self.setup_window()
+        self.create_menu_bar()
         self.create_widgets()
+
+        # Apply initial theme
+        self.apply_theme()
 
         # Bind spacebar to parse button
         self.root.bind('<space>', lambda event: self.on_parse_click())
@@ -61,6 +79,228 @@ class SpeechToTextApp:
         self.root.title(self.config.window_title)
         self.root.geometry(self.config.window_geometry)
         self.root.configure(padx=20, pady=20)
+
+    def create_menu_bar(self):
+        """Create menu bar with theme selector"""
+        colors = self.theme.current
+
+        menubar = tk.Menu(
+            self.root,
+            bg=colors.menubar_bg,
+            fg=colors.menubar_fg,
+            activebackground=colors.bg_button_active,
+            activeforeground=colors.fg_primary
+        )
+        self.root.config(menu=menubar)
+
+        # Theme menu
+        theme_menu = tk.Menu(
+            menubar,
+            tearoff=0,
+            bg=colors.menubar_bg,
+            fg=colors.menubar_fg,
+            activebackground=colors.accent_action,
+            activeforeground=colors.fg_primary,
+            selectcolor=colors.accent_action
+        )
+        menubar.add_cascade(label="Theme", menu=theme_menu)
+
+        # Theme selection variable
+        self.theme_var = tk.StringVar(value=self.theme.current_name)
+
+        theme_menu.add_radiobutton(
+            label="Light",
+            variable=self.theme_var,
+            value="light",
+            command=lambda: self.change_theme("light")
+        )
+        theme_menu.add_radiobutton(
+            label="Dark",
+            variable=self.theme_var,
+            value="dark",
+            command=lambda: self.change_theme("dark")
+        )
+
+    def change_theme(self, theme_name: str):
+        """Change application theme"""
+        self.theme.set_theme(theme_name)
+        self.theme_var.set(theme_name)
+
+    def apply_theme(self):
+        """Apply current theme to all widgets"""
+        colors = self.theme.current
+
+        # Configure root window
+        self.root.configure(bg=colors.bg_primary)
+
+        # Customize title bar
+        # self.customize_title_bar()
+
+        # Configure ttk styles
+        self.theme.configure_ttk_styles(self.root)
+
+        # Update menu bar colors
+        try:
+            menubar = self.root.nametowidget(self.root['menu'])
+            menubar.configure(
+                bg=colors.menubar_bg,
+                fg=colors.menubar_fg,
+                activebackground=colors.bg_button_active,
+                activeforeground=colors.fg_primary
+            )
+
+            # Update theme submenu
+            theme_menu = menubar.nametowidget(menubar.entrycget(0, 'menu'))
+            theme_menu.configure(
+                bg=colors.menubar_bg,
+                fg=colors.menubar_fg,
+                activebackground=colors.accent_action,
+                activeforeground=colors.fg_primary,
+                selectcolor=colors.accent_action
+            )
+        except Exception as e:
+            self.logger.debug(f"Could not style menu bar: {e}")
+
+        # Apply to all widgets if they exist
+        if hasattr(self, 'press_hold_button'):
+            self._apply_widget_theme()
+
+    def _apply_widget_theme(self):
+        """Apply theme to all existing widgets"""
+        colors = self.theme.current
+
+        # Button frames
+        for widget in [self.root]:
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Frame):
+                    child.configure(bg=colors.bg_primary)
+
+        # Recording buttons
+        self.press_hold_button.configure(
+            bg=colors.accent_record,
+            activebackground=colors.accent_record_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary
+        )
+        self.toggle_button.configure(
+            bg=colors.accent_record,
+            activebackground=colors.accent_record_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary
+        )
+
+        # Parse button
+        self.parse_button.configure(
+            bg=colors.accent_action,
+            activebackground=colors.accent_action_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary,
+            disabledforeground=colors.fg_disabled
+        )
+
+        # If button is currently disabled, temporarily enable it to apply colors, then disable again
+        current_state = str(self.parse_button['state'])
+        if current_state == 'disabled':
+            self.parse_button.configure(state=tk.NORMAL)
+            self.parse_button.configure(
+                bg=colors.accent_action,
+                fg=colors.fg_primary
+            )
+            self.parse_button.configure(state=tk.DISABLED)
+
+        # Status label
+        self.status_label.configure(
+            bg=colors.bg_primary,
+            fg=colors.fg_secondary
+        )
+
+        # Paned window
+        self.paned_window.configure(bg=colors.bg_primary)
+
+        # Fast transcription section
+        self._apply_section_theme(
+            self.fast_frame,
+            self.fast_copy_button,
+            self.fast_progress,
+            self.fast_output_text,
+            self.fast_status_label
+        )
+
+        # Accurate transcription section
+        self._apply_section_theme(
+            self.accurate_frame,
+            self.accurate_copy_button,
+            self.accurate_progress,
+            self.accurate_output_text,
+            self.accurate_status_label
+        )
+
+        # Datetime button
+        self.datetime_button.configure(
+            bg=colors.accent_utility,
+            activebackground=colors.accent_utility_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary
+        )
+
+    def _apply_section_theme(self, frame, copy_button, progress, text_area, status_label):
+        """Apply theme to a transcription section"""
+        colors = self.theme.current
+
+        # Frame
+        frame.configure(bg=colors.bg_primary)
+        for child in frame.winfo_children():
+            if isinstance(child, tk.Frame):
+                child.configure(bg=colors.bg_primary)
+
+        # Copy button
+        copy_button.configure(
+            bg=colors.accent_action,
+            activebackground=colors.accent_action_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary
+        )
+
+        # Progress bar
+        progress.configure(style="Custom.Horizontal.TProgressbar")
+
+        # Text area
+        text_area.configure(
+            bg=colors.bg_secondary,
+            fg=colors.fg_primary,
+            insertbackground=colors.fg_primary,
+            selectbackground=colors.text_select_bg,
+            selectforeground=colors.text_select_fg
+        )
+
+        # Try to style the scrollbar
+        try:
+            # Get the scrollbar widget
+            for child in text_area.winfo_children():
+                if isinstance(child, tk.Scrollbar):
+                    child.configure(
+                        bg=colors.scrollbar_bg,
+                        troughcolor=colors.scrollbar_bg,
+                        activebackground=colors.scrollbar_fg
+                    )
+        except Exception as e:
+            self.logger.debug(f"Could not style scrollbar: {e}")
+
+        # Status label
+        status_label.configure(
+            bg=colors.bg_primary,
+            fg=colors.fg_secondary
+        )
+
+        # Section header labels
+        for child in frame.winfo_children():
+            if isinstance(child, tk.Frame):
+                for subchild in child.winfo_children():
+                    if isinstance(subchild, tk.Label):
+                        subchild.configure(
+                            bg=colors.bg_primary,
+                            fg=colors.fg_primary
+                        )
 
     @contextmanager
     def suppress_subprocess_window(self):
@@ -90,23 +330,27 @@ class SpeechToTextApp:
 
     def create_widgets(self):
         """Create all GUI widgets"""
+        colors = self.theme.current
+
         # Button container frame
-        button_container = tk.Frame(self.root)
+        button_container = tk.Frame(self.root, bg=colors.bg_primary)
         button_container.pack(fill=tk.X, pady=(0, 10))
 
         # Create two buttons side by side (50/50 split)
-        button_left_frame = tk.Frame(button_container)
+        button_left_frame = tk.Frame(button_container, bg=colors.bg_primary)
         button_left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 2))
 
-        button_right_frame = tk.Frame(button_container)
+        button_right_frame = tk.Frame(button_container, bg=colors.bg_primary)
         button_right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(2, 0))
 
         # Press-and-hold button (left)
         self.press_hold_button = tk.Button(
             button_left_frame,
             text="Press and Hold to Record",
-            bg="lightcoral",
-            activebackground="red",
+            bg=colors.accent_record,
+            activebackground=colors.accent_record_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary,
             font=("Arial", 12),
             height=2
         )
@@ -118,8 +362,10 @@ class SpeechToTextApp:
         self.toggle_button = tk.Button(
             button_right_frame,
             text="Start Latching Record",
-            bg="lightcoral",
-            activebackground="red",
+            bg=colors.accent_record,
+            activebackground=colors.accent_record_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary,
             font=("Arial", 12),
             height=2,
             command=self.on_toggle_click
@@ -130,8 +376,11 @@ class SpeechToTextApp:
         self.parse_button = tk.Button(
             self.root,
             text="Parse Recording",
-            bg="lightblue",
-            activebackground="skyblue",
+            bg=colors.accent_action,
+            activebackground=colors.accent_action_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary,
+            disabledforeground=colors.fg_disabled,
             font=("Arial", 11),
             height=1,
             state=tk.DISABLED,
@@ -143,13 +392,15 @@ class SpeechToTextApp:
         self.status_label = tk.Label(
             self.root,
             text="Ready",
+            bg=colors.bg_primary,
+            fg=colors.fg_secondary,
             font=("Arial", 10, "italic"),
             anchor="w"
         )
         self.status_label.pack(fill=tk.X, pady=(5, 5))
 
         # Paned window for transcription areas
-        self.paned_window = tk.PanedWindow(self.root, orient=tk.VERTICAL)
+        self.paned_window = tk.PanedWindow(self.root, orient=tk.VERTICAL, bg=colors.bg_primary)
         self.paned_window.pack(fill=tk.BOTH, expand=True)
 
         # Fast transcription section
@@ -165,12 +416,15 @@ class SpeechToTextApp:
             self.copy_accurate_to_clipboard
         )
         self.paned_window.add(self.accurate_frame, height=300)
+
         # Copy datetime button
         self.datetime_button = tk.Button(
             self.root,
             text="Copy Datetime",
-            bg="lightgreen",
-            activebackground="green",
+            bg=colors.accent_utility,
+            activebackground=colors.accent_utility_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary,
             font=("Arial", 10),
             height=1,
             command=self.copy_datetime_to_clipboard
@@ -179,15 +433,18 @@ class SpeechToTextApp:
 
     def _create_transcription_section(self, title: str, copy_callback: Callable):
         """Create a transcription section with header, progress, and text area"""
-        frame = tk.Frame(self.paned_window)
+        colors = self.theme.current
+        frame = tk.Frame(self.paned_window, bg=colors.bg_primary)
 
         # Header with copy button
-        header_frame = tk.Frame(frame)
+        header_frame = tk.Frame(frame, bg=colors.bg_primary)
         header_frame.pack(fill=tk.X, pady=(5, 5))
 
         label = tk.Label(
             header_frame,
             text=title,
+            bg=colors.bg_primary,
+            fg=colors.fg_primary,
             font=("Arial", 10, "bold"),
             anchor="w"
         )
@@ -196,8 +453,10 @@ class SpeechToTextApp:
         copy_button = tk.Button(
             header_frame,
             text="Copy to Clipboard",
-            bg="lightblue",
-            activebackground="skyblue",
+            bg=colors.accent_action,
+            activebackground=colors.accent_action_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary,
             font=("Arial", 10, "bold"),
             padx=10,
             pady=5,
@@ -210,7 +469,8 @@ class SpeechToTextApp:
             frame,
             orient="horizontal",
             length=100,
-            mode="indeterminate"
+            mode="indeterminate",
+            style="Custom.Horizontal.TProgressbar"
         )
         progress.pack(fill=tk.X, pady=(0, 5))
 
@@ -219,7 +479,12 @@ class SpeechToTextApp:
             frame,
             wrap=tk.WORD,
             height=8,
-            font=("Arial", 11)
+            bg=colors.bg_secondary,
+            fg=colors.fg_primary,
+            font=("Arial", 11),
+            insertbackground=colors.fg_primary,
+            selectbackground=colors.text_select_bg,
+            selectforeground=colors.text_select_fg
         )
         text_area.pack(fill=tk.BOTH, expand=True)
 
@@ -227,8 +492,9 @@ class SpeechToTextApp:
         status = tk.Label(
             frame,
             text="",
+            bg=colors.bg_primary,
+            fg=colors.fg_secondary,
             font=("Arial", 8, "italic"),
-            fg="gray",
             anchor="w"
         )
         status.pack(fill=tk.X)
@@ -238,10 +504,12 @@ class SpeechToTextApp:
             self.fast_progress = progress
             self.fast_output_text = text_area
             self.fast_status_label = status
+            self.fast_copy_button = copy_button
         else:
             self.accurate_progress = progress
             self.accurate_output_text = text_area
             self.accurate_status_label = status
+            self.accurate_copy_button = copy_button
 
         return frame
 
@@ -301,7 +569,11 @@ class SpeechToTextApp:
 
         # Start recording
         if self.recorder.start_recording():
-            self.press_hold_button.config(text="Recording... Release to Stop", bg="red")
+            colors = self.theme.current
+            self.press_hold_button.config(
+                text="Recording... Release to Stop",
+                bg=colors.accent_record_active
+            )
             self.status_label.config(text="Recording audio...")
             self.reset_ui()
 
@@ -316,14 +588,21 @@ class SpeechToTextApp:
         # Stop recording and get frames
         frames = self.recorder.stop_recording()
 
+        colors = self.theme.current
         if not frames:
             self.status_label.config(text="No audio recorded")
-            self.press_hold_button.config(text="Press and Hold to Record", bg="lightcoral")
+            self.press_hold_button.config(
+                text="Press and Hold to Record",
+                bg=colors.accent_record
+            )
             return
 
         # Update UI
         self.processing.set(True)
-        self.press_hold_button.config(text="Press and Hold to Record", bg="lightcoral")
+        self.press_hold_button.config(
+            text="Press and Hold to Record",
+            bg=colors.accent_record
+        )
         self.status_label.config(text="Processing audio...")
         self.fast_progress.start()
 
@@ -338,6 +617,7 @@ class SpeechToTextApp:
             self.logger.warning("Cannot toggle recording while processing")
             return
 
+        colors = self.theme.current
         if not self.latching_recording.get():
             # Start latching recording
             self.cancel_second_pass.set(True)
@@ -349,16 +629,22 @@ class SpeechToTextApp:
                 self.accumulated_fast_text = ""
                 self.accumulated_accurate_text = ""
 
-                self.toggle_button.config(text="Stop Recording", bg="red")
+                self.toggle_button.config(
+                    text="Stop Recording",
+                    bg=colors.accent_record_active
+                )
                 self.press_hold_button.config(state=tk.DISABLED)
-                self.parse_button.config(state=tk.NORMAL)
+                self.parse_button.config(state=tk.NORMAL, fg=colors.fg_primary)
                 self._update_latching_status()
                 self.reset_ui()
         else:
             # Stop latching recording and process final segment
             self.latching_recording.set(False)
-            self.parse_button.config(state=tk.DISABLED)
-            self.toggle_button.config(text="Start Latching Record", bg="lightcoral")
+            self.parse_button.config(state=tk.DISABLED, fg=colors.fg_disabled)
+            self.toggle_button.config(
+                text="Start Latching Record",
+                bg=colors.accent_record
+            )
             self.press_hold_button.config(state=tk.NORMAL)
 
             # Stop recording

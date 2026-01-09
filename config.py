@@ -1,6 +1,5 @@
 # config.py
 import os.path
-
 import pyaudio
 import tempfile
 import logging
@@ -26,6 +25,8 @@ class Config:
     window_title: str = "Speech-to-Text App"
     window_geometry: str = "600x900"
     debounce_time: int = 500  # milliseconds
+    # Theme settings
+    default_theme: str = "dark"  # "dark" or "light"
     # Logging
     log_file: str = 'speech_to_text.log'
     log_level: int = logging.DEBUG
