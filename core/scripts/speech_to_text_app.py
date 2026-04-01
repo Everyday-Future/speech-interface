@@ -45,6 +45,9 @@ class SpeechToTextApp:
         # State management
         self.processing = SafeFlag()
         self.cancel_second_pass = SafeFlag()
+        self.cancel_processing = SafeFlag()
+        self.cancel_timestamp = None
+        self.current_operation = None
         self.last_button_press = 0
         self.temp_file: Optional[str] = None
 
@@ -53,6 +56,11 @@ class SpeechToTextApp:
         self.last_transcribed_frame_index = 0
         self.accumulated_fast_text = ""
         self.accumulated_accurate_text = ""
+
+        # Clipboard history slots — slot 0 is always "current" (!), slots 1-7 are past recordings.
+        # Each history entry: {'fast': str, 'accurate': str, 'timestamp': str}
+        self.slot_history: list[dict] = []
+        self.active_slot: int = 0  # which slot the text panels are currently showing
 
         # UI update queue
         self.ui_queue = Queue()
@@ -243,6 +251,30 @@ class SpeechToTextApp:
             activeforeground=colors.fg_primary
         )
 
+        # Cancel button
+        self.cancel_button.configure(
+            bg=colors.accent_record,
+            activebackground=colors.accent_record_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary,
+            disabledforeground=colors.fg_disabled
+        )
+
+        # If cancel button is currently disabled, temporarily enable it to apply colors
+        cancel_state = str(self.cancel_button['state'])
+        if cancel_state == 'disabled':
+            self.cancel_button.configure(state=tk.NORMAL)
+            self.cancel_button.configure(
+                bg=colors.accent_record,
+                fg=colors.fg_primary
+            )
+            self.cancel_button.configure(state=tk.DISABLED)
+
+        # History slot strip
+        if hasattr(self, 'slot_strip_frame'):
+            self.slot_strip_frame.configure(bg=colors.bg_primary)
+            self._update_slot_buttons()
+
     def _apply_section_theme(self, frame, copy_button, progress, text_area, status_label):
         """Apply theme to a transcription section"""
         colors = self.theme.current
@@ -431,6 +463,141 @@ class SpeechToTextApp:
         )
         self.datetime_button.pack(fill=tk.X, pady=(10, 0))
 
+        # Cancel parsing button
+        self.cancel_button = tk.Button(
+            self.root,
+            text="Cancel Parsing",
+            bg=colors.accent_record,
+            activebackground=colors.accent_record_active,
+            fg=colors.fg_primary,
+            activeforeground=colors.fg_primary,
+            disabledforeground=colors.fg_disabled,
+            font=("Arial", 10),
+            height=1,
+            state=tk.DISABLED,
+            command=self.on_cancel_click
+        )
+        self.cancel_button.pack(fill=tk.X, pady=(5, 0))
+
+        # History slot strip (! = current, 1-7 = previous recordings newest-to-oldest)
+        self._create_slot_strip()
+
+    def _create_slot_strip(self):
+        """Create the clipboard history button strip at the bottom of the window."""
+        colors = self.theme.current
+
+        self.slot_strip_frame = tk.Frame(self.root, bg=colors.bg_primary)
+        self.slot_strip_frame.pack(fill=tk.X, pady=(8, 0))
+
+        tk.Label(
+            self.slot_strip_frame,
+            text="History:",
+            bg=colors.bg_primary,
+            fg=colors.fg_secondary,
+            font=("Arial", 8)
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        self.slot_buttons: list[tk.Button] = []
+
+        # Slot 0 = current recording (marked with !)
+        btn = tk.Button(
+            self.slot_strip_frame,
+            text="!",
+            width=4,
+            font=("Arial", 10, "bold"),
+            relief=tk.SUNKEN,
+            bg=colors.accent_action,
+            fg=colors.fg_primary,
+            activebackground=colors.accent_action_active,
+            activeforeground=colors.fg_primary,
+            command=lambda: self._switch_slot(0)
+        )
+        btn.pack(side=tk.LEFT, padx=(0, 2))
+        self.slot_buttons.append(btn)
+
+        # Slots 1-7 = history, newest first
+        for i in range(1, 8):
+            btn = tk.Button(
+                self.slot_strip_frame,
+                text=str(i),
+                width=4,
+                font=("Arial", 8),
+                relief=tk.FLAT,
+                bg=colors.bg_tertiary,
+                fg=colors.fg_disabled,
+                activebackground=colors.bg_button_active,
+                activeforeground=colors.fg_primary,
+                command=lambda s=i: self._switch_slot(s)
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 2))
+            self.slot_buttons.append(btn)
+
+    def _save_to_history(self):
+        """Push the current text panel contents into history before a reset.
+
+        Called by reset_ui() at the start of every new recording so no work is lost.
+        """
+        if not hasattr(self, 'fast_output_text'):
+            return
+        fast = self.fast_output_text.get(1.0, tk.END).strip()
+        accurate = self.accurate_output_text.get(1.0, tk.END).strip()
+        if not fast and not accurate:
+            return
+
+        self.slot_history.insert(0, {
+            'fast': fast,
+            'accurate': accurate,
+            'timestamp': datetime.now().strftime("%H:%M:%S")
+        })
+        # Keep at most 7 history entries
+        if len(self.slot_history) > 7:
+            self.slot_history = self.slot_history[:7]
+
+        self._update_slot_buttons()
+
+    def _switch_slot(self, slot: int):
+        """Display the text for the given slot in the transcription panels."""
+        self.active_slot = slot
+        self._update_slot_buttons()
+
+        if slot == 0:
+            fast = self.accumulated_fast_text
+            accurate = self.accumulated_accurate_text
+        else:
+            idx = slot - 1
+            if idx < len(self.slot_history):
+                fast = self.slot_history[idx]['fast']
+                accurate = self.slot_history[idx]['accurate']
+            else:
+                fast = accurate = ""
+
+        self.fast_output_text.delete(1.0, tk.END)
+        self.fast_output_text.insert(tk.END, fast)
+        self.accurate_output_text.delete(1.0, tk.END)
+        self.accurate_output_text.insert(tk.END, accurate)
+
+    def _update_slot_buttons(self):
+        """Refresh button appearance to reflect active slot and which slots have content."""
+        if not hasattr(self, 'slot_buttons'):
+            return
+        colors = self.theme.current
+
+        for i, btn in enumerate(self.slot_buttons):
+            is_active = (i == self.active_slot)
+            has_content = (i == 0) or (i - 1 < len(self.slot_history))
+
+            if is_active:
+                btn.configure(relief=tk.SUNKEN, bg=colors.accent_action,
+                              fg=colors.fg_primary, activebackground=colors.accent_action_active)
+            elif has_content:
+                btn.configure(relief=tk.RAISED, bg=colors.bg_button_normal,
+                              fg=colors.fg_primary, activebackground=colors.bg_button_active)
+            else:
+                btn.configure(relief=tk.FLAT, bg=colors.bg_tertiary,
+                              fg=colors.fg_disabled, activebackground=colors.bg_tertiary)
+
+
+
     def _create_transcription_section(self, title: str, copy_callback: Callable):
         """Create a transcription section with header, progress, and text area"""
         colors = self.theme.current
@@ -551,6 +718,62 @@ class SpeechToTextApp:
         """Queue UI update for main thread"""
         self.ui_queue.put((func, args, kwargs))
 
+    def on_cancel_click(self):
+        """Handle cancel button click"""
+        if not self.processing.get():
+            return
+
+        self.logger.info("Cancel requested by user")
+
+        # Set cancellation flag and timestamp
+        self.cancel_processing.set(True)
+        self.cancel_timestamp = time.time()
+
+        # Update UI
+        colors = self.theme.current
+        self.status_label.config(text="Cancelling...")
+        self.cancel_button.config(state=tk.DISABLED, fg=colors.fg_disabled)
+
+        # If in latching mode, exit it
+        if self.latching_recording.get():
+            self.latching_recording.set(False)
+            self.recorder.stop_recording()
+            self.toggle_button.config(
+                text="Start Latching Record",
+                bg=colors.accent_record
+            )
+            self.press_hold_button.config(state=tk.NORMAL)
+            self.parse_button.config(state=tk.DISABLED, fg=colors.fg_disabled)
+
+    def _check_cancellation(self) -> bool:
+        """Check if processing should be cancelled
+
+        Returns:
+            True if should cancel, False otherwise
+        """
+        return self.cancel_processing.get()
+
+    def _reset_cancellation_state(self):
+        """Reset cancellation state after processing completes"""
+        self.cancel_processing.set(False)
+        self.cancel_timestamp = None
+        self.current_operation = None
+        colors = self.theme.current
+        self.queue_ui_update(self.cancel_button.config, state=tk.DISABLED, fg=colors.fg_disabled)
+
+    def _start_processing(self):
+        """Mark start of processing and enable cancel button"""
+        self.processing.set(True)
+        self.cancel_processing.set(False)
+        self.cancel_timestamp = None
+        colors = self.theme.current
+        self.queue_ui_update(self.cancel_button.config, state=tk.NORMAL, fg=colors.fg_primary)
+
+    def _end_processing(self):
+        """Mark end of processing and disable cancel button"""
+        self.processing.set(False)
+        self._reset_cancellation_state()
+
     def on_record_start(self, event):
         """Handle record button press"""
         # Debounce check
@@ -598,7 +821,7 @@ class SpeechToTextApp:
             return
 
         # Update UI
-        self.processing.set(True)
+        self._start_processing()
         self.press_hold_button.config(
             text="Press and Hold to Record",
             bg=colors.accent_record
@@ -652,7 +875,7 @@ class SpeechToTextApp:
 
             if frames:
                 # Process final unparsed segment
-                self.processing.set(True)
+                self._start_processing()
                 self.status_label.config(text="Processing final segment...")
                 thread = threading.Thread(target=self.process_final_segment, args=(frames,))
                 thread.daemon = True
@@ -683,6 +906,7 @@ class SpeechToTextApp:
         self.last_transcribed_frame_index = current_frame_count
 
         # Process in background
+        self._start_processing()
         self.status_label.config(text="Parsing recorded audio...")
         self.fast_progress.start()
         self.accurate_progress.start()
@@ -697,6 +921,10 @@ class SpeechToTextApp:
     def transcribe_with_retry(self, transcribe_func, audio_file, max_retries=3):
         """Attempt transcription with automatic retry"""
         for attempt in range(max_retries):
+            if self._check_cancellation():
+                self.logger.info(f"Transcription cancelled before attempt {attempt + 1}")
+                return None
+
             try:
                 with self.suppress_subprocess_window():
                     return transcribe_func(audio_file)
@@ -710,7 +938,15 @@ class SpeechToTextApp:
     def process_incremental_transcription(self, frames_segment: list, segment_start_index: int):
         """Process incremental transcription of a segment"""
         temp_file = None
+        operation_start_time = time.time()
+
         try:
+            # Check for cancellation before starting
+            if self._check_cancellation():
+                self.logger.info("Incremental transcription cancelled before start")
+                self._handle_cancellation()
+                return
+
             # Create temp file for this segment
             fd, temp_file = tempfile.mkstemp(suffix='.wav', dir=self.config.temp_dir)
             os.close(fd)
@@ -720,11 +956,19 @@ class SpeechToTextApp:
                 raise Exception("Failed to save audio segment")
 
             # Fast transcription with retry
+            self.current_operation = "fast"
             self.queue_ui_update(self.fast_status_label.config, text="Transcribing...")
+
             fast_text = self.transcribe_with_retry(
                 self.transcriber.transcribe_fast,
                 temp_file
             )
+
+            # Check if cancelled during transcription
+            if self._check_cancellation() or fast_text is None:
+                self.logger.info("Incremental transcription cancelled after fast pass")
+                self._handle_cancellation()
+                return
 
             # Strip whitespace and append to accumulated text
             fast_text = fast_text.strip()
@@ -740,12 +984,26 @@ class SpeechToTextApp:
             # Update status with word/paragraph counts
             self._update_latching_status()
 
+            # Check cancellation before accurate transcription
+            if self._check_cancellation():
+                self.logger.info("Incremental transcription cancelled before accurate pass")
+                self._handle_cancellation()
+                return
+
             # Accurate transcription with retry
+            self.current_operation = "accurate"
             self.queue_ui_update(self.accurate_status_label.config, text="Processing...")
+
             accurate_text = self.transcribe_with_retry(
                 self.transcriber.transcribe_accurate,
                 temp_file
             )
+
+            # Check if cancelled during transcription
+            if self._check_cancellation() or accurate_text is None:
+                self.logger.info("Incremental transcription cancelled after accurate pass")
+                self._handle_cancellation()
+                return
 
             # Strip whitespace and append to accumulated text
             accurate_text = accurate_text.strip()
@@ -763,8 +1021,8 @@ class SpeechToTextApp:
             self.queue_ui_update(self.status_label.config, text=f"Parse error: {str(e)}")
             self.queue_ui_update(self.fast_progress.stop)
             self.queue_ui_update(self.accurate_progress.stop)
-            raise
         finally:
+            self._end_processing()
             if temp_file and os.path.exists(temp_file):
                 try:
                     os.remove(temp_file)
@@ -774,7 +1032,14 @@ class SpeechToTextApp:
     def process_final_segment(self, frames: list):
         """Process final unparsed segment when stopping latching recording"""
         temp_file = None
+
         try:
+            # Check for cancellation before starting
+            if self._check_cancellation():
+                self.logger.info("Final segment processing cancelled before start")
+                self._handle_cancellation()
+                return
+
             # Get only unparsed frames
             unparsed_frames = frames[self.last_transcribed_frame_index:]
 
@@ -786,7 +1051,7 @@ class SpeechToTextApp:
                 else:
                     final_status = "Ready"
                 self.queue_ui_update(self.status_label.config, text=final_status)
-                self.processing.set(False)
+                self._end_processing()
                 return
 
             # Create temp file
@@ -801,11 +1066,19 @@ class SpeechToTextApp:
             self.queue_ui_update(self.accurate_progress.start)
 
             # Fast transcription with retry
+            self.current_operation = "fast"
             self.queue_ui_update(self.fast_status_label.config, text="Transcribing final segment...")
+
             fast_text = self.transcribe_with_retry(
                 self.transcriber.transcribe_fast,
                 temp_file
             )
+
+            # Check if cancelled during transcription
+            if self._check_cancellation() or fast_text is None:
+                self.logger.info("Final segment cancelled after fast pass")
+                self._handle_cancellation()
+                return
 
             # Strip whitespace and append to accumulated text
             fast_text = fast_text.strip()
@@ -818,12 +1091,26 @@ class SpeechToTextApp:
             self.queue_ui_update(self.fast_output_text.delete, 1.0, tk.END)
             self.queue_ui_update(self.fast_output_text.insert, tk.END, self.accumulated_fast_text)
 
+            # Check cancellation before accurate transcription
+            if self._check_cancellation():
+                self.logger.info("Final segment cancelled before accurate pass")
+                self._handle_cancellation()
+                return
+
             # Accurate transcription with retry
+            self.current_operation = "accurate"
             self.queue_ui_update(self.accurate_status_label.config, text="Processing final segment...")
+
             accurate_text = self.transcribe_with_retry(
                 self.transcriber.transcribe_accurate,
                 temp_file
             )
+
+            # Check if cancelled during transcription
+            if self._check_cancellation() or accurate_text is None:
+                self.logger.info("Final segment cancelled after accurate pass")
+                self._handle_cancellation()
+                return
 
             # Strip whitespace and append to accumulated text
             accurate_text = accurate_text.strip()
@@ -849,18 +1136,37 @@ class SpeechToTextApp:
             self.queue_ui_update(self.status_label.config, text=f"Error: {str(e)}")
             self.queue_ui_update(self.fast_progress.stop)
             self.queue_ui_update(self.accurate_progress.stop)
-            raise
         finally:
-            self.processing.set(False)
+            self._end_processing()
             if temp_file and os.path.exists(temp_file):
                 try:
                     os.remove(temp_file)
                 except Exception as e:
                     self.logger.error(f"Error removing temp file: {e}")
 
+    def _handle_cancellation(self):
+        """Handle cleanup after cancellation"""
+        self.queue_ui_update(self.fast_progress.stop)
+        self.queue_ui_update(self.accurate_progress.stop)
+
+        # Show word/paragraph count if we have accumulated text
+        if self.accumulated_fast_text:
+            word_count, para_count = self._get_transcription_stats(self.accumulated_fast_text)
+            final_status = f"Cancelled  (Word count: {word_count}   Paragraph count: {para_count})"
+        else:
+            final_status = "Cancelled"
+
+        self.queue_ui_update(self.status_label.config, text=final_status)
+
     def process_audio(self, frames: list):
         """Process recorded audio with two-pass transcription"""
         try:
+            # Check for cancellation before starting
+            if self._check_cancellation():
+                self.logger.info("Audio processing cancelled before start")
+                self._handle_cancellation()
+                return
+
             # Create temp file
             fd, self.temp_file = tempfile.mkstemp(suffix='.wav', dir=self.config.temp_dir)
             os.close(fd)
@@ -870,9 +1176,23 @@ class SpeechToTextApp:
                 raise Exception("Failed to save audio file")
 
             # Fast transcription
+            self.current_operation = "fast"
             self.queue_ui_update(self.fast_status_label.config, text="Transcribing...")
             text = self.transcriber.transcribe_fast(self.temp_file)
 
+            # Check if cancelled during transcription
+            if self._check_cancellation():
+                self.logger.info("Audio processing cancelled after fast pass")
+                # Display the fast result we got before cancelling
+                self.accumulated_fast_text = text
+                self.queue_ui_update(self.fast_progress.stop)
+                self.queue_ui_update(self.fast_status_label.config, text="Complete!")
+                self.queue_ui_update(self.fast_output_text.delete, 1.0, tk.END)
+                self.queue_ui_update(self.fast_output_text.insert, tk.END, text)
+                self._handle_cancellation()
+                return
+
+            self.accumulated_fast_text = text
             self.queue_ui_update(self.fast_progress.stop)
             self.queue_ui_update(self.fast_status_label.config, text="Complete!")
             self.queue_ui_update(self.fast_output_text.delete, 1.0, tk.END)
@@ -880,13 +1200,27 @@ class SpeechToTextApp:
 
             # Accurate transcription (if not cancelled)
             self.cancel_second_pass.set(False)
-            if not self.cancel_second_pass.get():
+            if not self.cancel_second_pass.get() and not self._check_cancellation():
+                self.current_operation = "accurate"
                 self.queue_ui_update(self.accurate_progress.start)
                 self.queue_ui_update(self.accurate_status_label.config, text="Processing...")
 
                 text = self.transcriber.transcribe_accurate(self.temp_file)
 
+                # Check if cancelled during transcription
+                if self._check_cancellation():
+                    self.logger.info("Audio processing cancelled after accurate pass")
+                    # Display the accurate result we got before cancelling
+                    self.accumulated_accurate_text = text
+                    self.queue_ui_update(self.accurate_progress.stop)
+                    self.queue_ui_update(self.accurate_status_label.config, text="Complete!")
+                    self.queue_ui_update(self.accurate_output_text.delete, 1.0, tk.END)
+                    self.queue_ui_update(self.accurate_output_text.insert, tk.END, text)
+                    self._handle_cancellation()
+                    return
+
                 if not self.cancel_second_pass.get():
+                    self.accumulated_accurate_text = text
                     self.queue_ui_update(self.accurate_progress.stop)
                     self.queue_ui_update(self.accurate_status_label.config, text="Complete!")
                     self.queue_ui_update(self.accurate_output_text.delete, 1.0, tk.END)
@@ -898,9 +1232,10 @@ class SpeechToTextApp:
             self.queue_ui_update(self.fast_progress.stop)
             self.queue_ui_update(self.accurate_progress.stop)
         finally:
-            self.processing.set(False)
+            self._end_processing()
             self.cleanup_temp_file()
-            self.queue_ui_update(self.status_label.config, text="Ready")
+            if not self._check_cancellation():
+                self.queue_ui_update(self.status_label.config, text="Ready")
 
     def cleanup_temp_file(self):
         """Clean up temporary file"""
@@ -915,6 +1250,13 @@ class SpeechToTextApp:
 
     def reset_ui(self):
         """Reset UI elements"""
+        # Save current content to history before clearing, so no work is lost
+        self._save_to_history()
+        self.accumulated_fast_text = ""
+        self.accumulated_accurate_text = ""
+        self.active_slot = 0
+        self._update_slot_buttons()
+
         self.fast_status_label.config(text="")
         self.accurate_status_label.config(text="")
         self.fast_output_text.delete(1.0, tk.END)
@@ -946,7 +1288,8 @@ class SpeechToTextApp:
         if text:
             try:
                 pyperclip.copy(text)
-                status_label.config(text=f"{prefix} transcription copied!")
+                slot_hint = f" (slot {self.active_slot})" if self.active_slot > 0 else ""
+                status_label.config(text=f"{prefix} transcription{slot_hint} copied!")
             except Exception as e:
                 self.logger.error(f"Copy error: {e}")
                 status_label.config(text=f"Copy error: {str(e)}")
@@ -957,6 +1300,7 @@ class SpeechToTextApp:
         """Clean up on window close"""
         self.logger.info("Shutting down...")
         self.cancel_second_pass.set(True)
+        self.cancel_processing.set(True)
         self.latching_recording.set(False)
         self.recorder.cleanup()
         self.cleanup_temp_file()
