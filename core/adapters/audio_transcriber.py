@@ -2,6 +2,7 @@
 import whisper
 import logging
 from config import Config
+from core.adapters.text_corrections import apply_corrections
 
 
 class AudioTranscriber:
@@ -32,7 +33,7 @@ class AudioTranscriber:
         """Transcribe with fast model"""
         try:
             result = self.fast_model.transcribe(audio_file)
-            return result['text']
+            return apply_corrections(result['text'])
         except Exception as e:
             self.logger.error(f"Fast transcription error: {e}")
             raise
@@ -41,7 +42,7 @@ class AudioTranscriber:
         """Transcribe with accurate model"""
         try:
             result = self.accurate_model.transcribe(audio_file)
-            return result['text']
+            return apply_corrections(result['text'])
         except Exception as e:
             self.logger.error(f"Accurate transcription error: {e}")
             raise
