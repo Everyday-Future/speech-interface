@@ -21,6 +21,14 @@ class Config:
     # Model settings
     fast_model_name: str = 'tiny.en'
     accurate_model_name: str = 'medium.en'
+    # Batch (offline) model settings
+    batch_fast_model_name: str = 'medium.en'
+    batch_accurate_model_name: str = 'large-v3'
+    # SD card settings
+    sd_card_label: str = 'SYNC-SD'
+    sd_source_subpath: str = 'STEREO/FOLDER01'
+    recordings_dir: str = 'data/recordings'
+    transcripts_dir: str = 'data/transcripts'
     # UI settings
     window_title: str = "Speech-to-Text App"
     window_geometry: str = "600x900"
@@ -32,6 +40,7 @@ class Config:
     log_level: int = logging.DEBUG
     # Paths
     temp_dir: Optional[Path] = None
+
 
     def __post_init__(self):
         if self.temp_dir is None:

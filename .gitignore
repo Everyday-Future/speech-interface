@@ -25,9 +25,9 @@ msedgedriver.exe
 data/*.json
 data/raw/
 data/temp/
-data/renders/
+data/recordings/
 data/creds/
-data/grading/
+data/transcripts/
 data/pipeline/
 data/images/upload/
 data/images/completed/
